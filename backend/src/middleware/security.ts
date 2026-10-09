@@ -25,3 +25,5 @@ export const globalLimiter = rateLimit({ ...limiterBase, windowMs: 15 * 60 * 100
 export const startLimiter = rateLimit({ ...limiterBase, windowMs: 60 * 60 * 1000, limit: 30 });
 export const messageLimiter = rateLimit({ ...limiterBase, windowMs: 60 * 1000, limit: 30 });
 export const adminLimiter = rateLimit({ ...limiterBase, windowMs: 60 * 1000, limit: 120 });
+/** Counts only rejected admin requests (wrong key etc.), so guessing the key is throttled without limiting real staff. */
+export const adminAuthFailLimiter = rateLimit({ ...limiterBase, windowMs: 15 * 60 * 1000, limit: 20, skipSuccessfulRequests: true });

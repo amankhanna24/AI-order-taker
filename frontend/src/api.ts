@@ -52,6 +52,8 @@ export const api = {
   cancel: (id: string, token: string) =>
     request<{ order: import('./types').Order; state: string }>(`/conversations/${id}/cancel`, { method: 'POST', token, body: '{}' }),
   admin: {
+    /** 200 only for the correct key; anything else rejects. Used to verify a key before unlocking the console. */
+    session: (k: string) => request<{ valid: boolean }>('/admin/session', { adminKey: k }),
     menu: (k: string) => request<AdminMenu>('/admin/menu', { adminKey: k }),
     orders: (k: string, f: OrdersQuery) => {
       const p = new URLSearchParams({ page: String(f.page), limit: String(f.limit), tzOffset: String(new Date().getTimezoneOffset()) });
@@ -110,7 +112,7 @@ export type AllergenName = (typeof ALLERGENS)[number];
 export interface ProductInput {
   name: string;
   description: string | null;
-  basePrice: number; // paise
+  basePrice: number; // minor units (fils)
   vegetarian: boolean;
   vegan: boolean;
   glutenFree: boolean;

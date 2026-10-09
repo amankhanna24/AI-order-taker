@@ -28,10 +28,10 @@ export const ordersQuery = z.object({
 
 /* ---------- menu management ---------- */
 
-const MAX_PRICE_PAISE = 10_000_000; // ₹100,000
+const MAX_PRICE_MINOR = 10_000_000; // 100,000 in major units
 const name = z.string().trim().min(1, 'Name is required').max(80, 'Name is too long');
 const description = z.string().trim().max(300, 'Description is too long').nullable();
-const price = z.number().int('Price must be a whole number of paise').min(0, 'Price cannot be negative').max(MAX_PRICE_PAISE, 'Price is too high');
+const price = z.number().int('Price must be a whole number of fils').min(0, 'Price cannot be negative').max(MAX_PRICE_MINOR, 'Price is too high');
 const hhmm = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use HH:mm (24-hour)').nullable();
 const aliases = z.array(z.string().trim().min(1).max(40)).max(10, 'At most 10 aliases');
 const allergens = z.array(z.enum(['MILK', 'EGG', 'PEANUTS', 'TREE_NUTS', 'SOY', 'GLUTEN', 'SESAME', 'MUSTARD'])).max(8);

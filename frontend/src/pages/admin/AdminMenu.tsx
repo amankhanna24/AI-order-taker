@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { ALLERGENS, ApiFailure, api, type AdminCombo, type AdminMenu as MenuData, type AdminProduct, type AllergenName, type ProductInput } from '../../api';
-import { money, parseRupees, rupeesInput } from '../../format';
+import { amountInput, money, parseAmount } from '../../format';
 import type { AdminCtx } from './AdminLayout';
 
 type Category = MenuData['categories'][number];
@@ -17,6 +17,8 @@ const ALLERGEN_LABEL = (a: string) => a.charAt(0) + a.slice(1).toLowerCase().rep
 
 /** Error from the last failed save, shown inside whichever dialog is open. */
 const DialogErrorContext = createContext<string | null>(null);
+/** The restaurant's currency code, for price labels inside the dialogs. */
+const CurrencyContext = createContext('AED');
 
 function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: ReactNode; wide?: boolean }) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -116,16 +118,17 @@ function OptionsEditor({ product, onChange, busy }: { product: AdminProduct; onC
 }
 
 function OptionRow({ option: o, busy, adminKey, onChange }: { option: AdminProduct['modifiers'][number]; busy: boolean; adminKey: string; onChange: (kind: 'add' | 'save' | 'remove', fn: () => Promise<unknown>, done: string) => void }) {
+  const cur = useContext(CurrencyContext);
   const [name, setName] = useState(o.name);
-  const [price, setPrice] = useState(rupeesInput(o.priceDelta));
-  const parsed = parseRupees(price);
+  const [price, setPrice] = useState(amountInput(o.priceDelta));
+  const parsed = parseAmount(price);
   const dirty = name.trim() !== o.name || parsed !== o.priceDelta;
   const valid = name.trim().length > 0 && parsed !== null;
   return (
     <div className="option-row">
       <input type="text" aria-label="Option name" value={name} maxLength={80} onChange={(e) => setName(e.target.value)} />
       <span className="money-input">
-        <span aria-hidden="true">+₹</span>
+        <span aria-hidden="true">+{cur}</span>
         <input type="text" inputMode="decimal" aria-label={`Extra price for ${o.name}`} aria-invalid={parsed === null} value={price} onChange={(e) => setPrice(e.target.value)} />
       </span>
       <label className="switch-row" title={o.available ? 'Available' : 'Sold out'}>
@@ -138,15 +141,16 @@ function OptionRow({ option: o, busy, adminKey, onChange }: { option: AdminProdu
 }
 
 function NewOption({ groupId, busy, adminKey, onChange }: { groupId: string; busy: boolean; adminKey: string; onChange: (kind: 'add' | 'save' | 'remove', fn: () => Promise<unknown>, done: string) => void }) {
+  const cur = useContext(CurrencyContext);
   const [name, setName] = useState('');
   const [price, setPrice] = useState('0');
-  const parsed = parseRupees(price);
+  const parsed = parseAmount(price);
   const ok = name.trim().length > 0 && parsed !== null;
   return (
     <div className="option-row option-new">
       <input type="text" aria-label="New option name" placeholder="New option…" value={name} maxLength={80} onChange={(e) => setName(e.target.value)} />
       <span className="money-input">
-        <span aria-hidden="true">+₹</span>
+        <span aria-hidden="true">+{cur}</span>
         <input type="text" inputMode="decimal" aria-label="New option extra price" aria-invalid={parsed === null} value={price} onChange={(e) => setPrice(e.target.value)} />
       </span>
       <button
@@ -199,10 +203,11 @@ function ItemForm({
   onOption: (kind: 'add' | 'save' | 'remove', fn: () => Promise<unknown>, done: string) => void;
   onClose: () => void;
 }) {
+  const cur = useContext(CurrencyContext);
   const [d, setD] = useState<ItemDraft>({
     name: product?.name ?? '',
     description: product?.description ?? '',
-    price: product ? rupeesInput(product.basePrice) : '',
+    price: product ? amountInput(product.basePrice) : '',
     categoryId,
     vegetarian: product?.vegetarian ?? true,
     vegan: product?.vegan ?? false,
@@ -223,9 +228,9 @@ function ItemForm({
     e.preventDefault();
     if (busy) return;
     const errs: Record<string, string> = {};
-    const basePrice = parseRupees(d.price);
+    const basePrice = parseAmount(d.price);
     if (!d.name.trim()) errs.name = 'Name is required';
-    if (basePrice === null) errs.price = 'Enter a price like 120 or 120.50 (max ₹100000)';
+    if (basePrice === null) errs.price = 'Enter a price like 120 or 120.50 (max 100000)';
     if (!!d.from !== !!d.until) errs.window = 'Set both times, or clear both';
     if (d.from && d.until && d.from === d.until) errs.window = 'Start and end must differ';
     const aliases = d.aliases.split(',').map((a) => a.trim()).filter(Boolean);
@@ -254,7 +259,7 @@ function ItemForm({
           <Field label="Name" error={errors.name}>
             <input type="text" value={d.name} maxLength={80} autoFocus={!product} onChange={(e) => set('name', e.target.value)} />
           </Field>
-          <Field label="Price (₹)" error={errors.price}>
+          <Field label={`Price (${cur})`} error={errors.price}>
             <input type="text" inputMode="decimal" value={d.price} placeholder="0.00" aria-invalid={!!errors.price} onChange={(e) => set('price', e.target.value)} />
           </Field>
         </div>
@@ -330,17 +335,18 @@ function ItemForm({
 }
 
 function ComboForm({ combo, busy, onSave, onClose }: { combo: AdminCombo; busy: boolean; onSave: (v: { name: string; description: string | null; basePrice: number }) => void; onClose: () => void }) {
+  const cur = useContext(CurrencyContext);
   const [name, setName] = useState(combo.name);
   const [description, setDescription] = useState(combo.description ?? '');
-  const [price, setPrice] = useState(rupeesInput(combo.basePrice));
+  const [price, setPrice] = useState(amountInput(combo.basePrice));
   const [errors, setErrors] = useState<Record<string, string>>({});
   const submit = (e: FormEvent) => {
     e.preventDefault();
     if (busy) return;
-    const basePrice = parseRupees(price);
+    const basePrice = parseAmount(price);
     const errs: Record<string, string> = {};
     if (!name.trim()) errs.name = 'Name is required';
-    if (basePrice === null) errs.price = 'Enter a price like 299 or 299.50';
+    if (basePrice === null) errs.price = 'Enter a price like 42 or 42.50';
     setErrors(errs);
     if (Object.keys(errs).length) return;
     onSave({ name: name.trim(), description: description.trim() || null, basePrice: basePrice! });
@@ -349,7 +355,7 @@ function ComboForm({ combo, busy, onSave, onClose }: { combo: AdminCombo; busy: 
     <Modal title="Edit combo" onClose={onClose}>
       <form className="stack" onSubmit={submit} noValidate>
         <Field label="Name" error={errors.name}><input type="text" value={name} maxLength={80} onChange={(e) => setName(e.target.value)} /></Field>
-        <Field label="Price (₹)" error={errors.price}><input type="text" inputMode="decimal" value={price} onChange={(e) => setPrice(e.target.value)} /></Field>
+        <Field label={`Price (${cur})`} error={errors.price}><input type="text" inputMode="decimal" value={price} onChange={(e) => setPrice(e.target.value)} /></Field>
         <Field label="Description (optional)"><textarea className="textarea" rows={2} maxLength={300} value={description} onChange={(e) => setDescription(e.target.value)} /></Field>
         <div className="modal-actions">
           <button type="button" className="btn btn-secondary" onClick={onClose}>Cancel</button>
@@ -375,7 +381,7 @@ export default function AdminMenuPage() {
   const reqId = useRef(0);
   const toastTimer = useRef<number | undefined>(undefined);
 
-  const cur = menu?.restaurant.currency ?? 'INR';
+  const cur = menu?.restaurant.currency ?? 'AED';
 
   const fail = useCallback(
     (err: unknown, fallback: string): string => {
@@ -557,6 +563,7 @@ export default function AdminMenuPage() {
       )}
 
       {/* dialogs */}
+      <CurrencyContext.Provider value={cur}>
       <DialogErrorContext.Provider value={dialogError}>
       {dialog?.kind === 'category' && (!dialog.categoryId || editingCategory) && (
         <>
@@ -616,6 +623,7 @@ export default function AdminMenuPage() {
         </Modal>
       )}
       </DialogErrorContext.Provider>
+      </CurrencyContext.Provider>
     </>
   );
 }

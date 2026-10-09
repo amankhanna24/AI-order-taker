@@ -37,7 +37,7 @@ export default function MenuPage() {
                 </div>
                 {p.description && <p className="muted">{p.description}</p>}
                 <div className="chips">
-                  <span className="chip chip-green">{p.vegan ? 'Vegan' : 'Vegetarian'}</span>
+                  {(p.vegan || p.vegetarian) && <span className="chip chip-green">{p.vegan ? 'Vegan' : 'Vegetarian'}</span>}
                   {p.allergens && p.allergens.length > 0 && <span className="chip">Contains: {p.allergens.map((a) => a.replace('_', ' ').toLowerCase()).join(', ')}</span>}
                   {p.allergens === null && <span className="chip chip-warn">Allergen info: ask staff</span>}
                   {!p.available && <span className="chip chip-remove">{p.unavailableReason ?? 'Unavailable'}</span>}
@@ -54,6 +54,7 @@ export default function MenuPage() {
             {menu.combos.map((c) => (
               <li key={c.id} className={`card ${c.available ? '' : 'card-off'}`}>
                 <div className="card-row"><h3>{c.name}</h3><strong>{c.priceDisplay}</strong></div>
+                {c.description && <p className="muted">{c.description}</p>}
                 {!c.available && <span className="chip chip-remove">Unavailable</span>}
               </li>
             ))}

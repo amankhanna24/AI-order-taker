@@ -47,7 +47,13 @@ export interface ComboComponentView {
   required: boolean;
   min: number;
   max: number;
-  options: { productId: string; productName: string; upcharge: number }[];
+  options: { productId: string; productName: string; upcharge: number; presets: ComboPresetView[] }[];
+}
+/** A variant the combo fixes for a component product (e.g. Medium for the soft drink); already included in the combo price. */
+export interface ComboPresetView {
+  modifierId: string;
+  modifierName: string;
+  groupId: string;
 }
 export interface ComboView {
   id: string;
@@ -101,7 +107,12 @@ export async function loadCatalog(restaurantId: string, now = new Date()): Promi
           },
           combos: {
             where: { status: 'ACTIVE' },
-            include: { components: { orderBy: { displayOrder: 'asc' }, include: { allowedProducts: { include: { product: true } } } } },
+            include: {
+              components: {
+                orderBy: { displayOrder: 'asc' },
+                include: { allowedProducts: { include: { product: true, presets: { include: { modifier: true } } } } },
+              },
+            },
           },
         },
       },
@@ -174,7 +185,12 @@ export async function loadCatalog(restaurantId: string, now = new Date()): Promi
         required: comp.required,
         min: comp.minimumSelections,
         max: comp.maximumSelections,
-        options: comp.allowedProducts.map((ap) => ({ productId: ap.productId, productName: ap.product.name, upcharge: ap.upcharge })),
+        options: comp.allowedProducts.map((ap) => ({
+          productId: ap.productId,
+          productName: ap.product.name,
+          upcharge: ap.upcharge,
+          presets: ap.presets.map((pr) => ({ modifierId: pr.modifierId, modifierName: pr.modifier.name, groupId: pr.modifier.modifierGroupId })),
+        })),
       }));
       combos.push({
         id: c.id,

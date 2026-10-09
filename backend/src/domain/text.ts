@@ -1,6 +1,7 @@
 /** Symmetric normalisation used for menu names, aliases and customer phrases. */
 function stem(token: string): string {
   if (token.length > 4 && token.endsWith('ies')) return token.slice(0, -3) + 'y';
+  if (/(?:sh|ch|x|z|ss)es$/.test(token)) return token.slice(0, -2); // smashes -> smash, sandwiches -> sandwich
   if (token.length > 3 && token.endsWith('s') && !token.endsWith('ss')) return token.slice(0, -1);
   return token;
 }
@@ -47,7 +48,7 @@ export type MatchResult<T> =
  * Tier 1: exact name/alias. Tier 2: every query token appears in name/alias tokens.
  * More than one hit in the winning tier is AMBIGUOUS — callers must clarify, never pick.
  */
-export function resolveNamed<T extends Named>(query: string, items: T[]): MatchResult<T> {
+export function resolveNamed<T extends Named>(query: string, items: T[], opts: { fuzzy?: boolean } = {}): MatchResult<T> {
   const q = normalize(query);
   if (!q) return { kind: 'NONE' };
   const labels = (i: T) => [i.name, ...(i.aliases ?? [])].map(normalize);
@@ -66,11 +67,13 @@ export function resolveNamed<T extends Named>(query: string, items: T[]): MatchR
   if (subset.length === 1) return { kind: 'ONE', match: subset[0] };
   if (subset.length > 1) return { kind: 'MANY', matches: subset };
 
-  // Tier 3: typo tolerance (1 edit for tokens of 4+ letters) — e.g. "mozarella", "jalapeno".
+  // Tier 3: typo tolerance (1 edit for tokens of 5+ letters) — e.g. "mozarella", "jalapeno". Short words are
+  // too easily another word ("coke" is one edit from "cole"), so they must match exactly.
+  if (opts.fuzzy === false) return { kind: 'NONE' };
   const near = items.filter((i) =>
     [i.name, ...(i.aliases ?? [])].some((label) => {
       const lt = tokens(label);
-      return qt.every((t) => lt.includes(t) || (t.length >= 4 && lt.some((l) => within(t, l, t.length >= 8 ? 2 : 1))));
+      return qt.every((t) => lt.includes(t) || (t.length >= 5 && lt.some((l) => within(t, l, t.length >= 8 ? 2 : 1))));
     }),
   );
   if (near.length === 1) return { kind: 'ONE', match: near[0] };

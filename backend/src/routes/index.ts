@@ -1,7 +1,7 @@
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import { env } from '../config/env';
 import { formatMoney } from '../domain/money';
-import { adminLimiter, bearerToken, messageLimiter, requireAdmin, startLimiter } from '../middleware/security';
+import { adminAuthFailLimiter, adminLimiter, bearerToken, messageLimiter, requireAdmin, startLimiter } from '../middleware/security';
 import * as admin from '../services/adminService';
 import { getRestaurantBySlug, loadCatalog } from '../services/catalog';
 import * as conv from '../services/conversationService';
@@ -57,7 +57,14 @@ router.get(
     ok(res, {
       restaurant: { name: c.restaurant.name, currency: cur, status: c.restaurant.status, orderingEnabled: c.restaurant.orderingEnabled },
       categories,
-      combos: c.combos.map((x) => ({ id: x.id, name: x.name, price: x.basePrice, priceDisplay: formatMoney(x.basePrice, cur), available: x.orderable.ok })),
+      combos: c.combos.map((x) => ({
+        id: x.id,
+        name: x.name,
+        description: x.description,
+        price: x.basePrice,
+        priceDisplay: formatMoney(x.basePrice, cur),
+        available: x.orderable.ok,
+      })),
     });
   }),
 );
@@ -110,8 +117,11 @@ router.post(
 /* ---------- admin (x-admin-key header) ---------- */
 
 export const adminRouter = Router();
-adminRouter.use(adminLimiter, requireAdmin);
+adminRouter.use(adminAuthFailLimiter, adminLimiter, requireAdmin);
 const restaurantId = async () => (await getRestaurantBySlug(env.DEFAULT_RESTAURANT_SLUG)).id;
+
+/** Lets the staff console check a key before it unlocks anything: 200 only for the correct key (requireAdmin rejects the rest). */
+adminRouter.get('/session', (_req, res) => ok(res, { valid: true }));
 
 adminRouter.get('/menu', wrap(async (_req, res) => ok(res, await admin.adminMenu(await restaurantId()))));
 adminRouter.patch('/restaurant', wrap(async (req, res) => ok(res, await admin.updateRestaurant(await restaurantId(), restaurantBody.parse(req.body)))));

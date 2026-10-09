@@ -9,7 +9,7 @@ const schema = z.object({
   GEMINI_API_KEY: z.string().optional().default(''),
   GEMINI_MODEL: z.string().default('gemini-2.5-flash'),
   ADMIN_API_KEY: z.string().optional().default(''),
-  DEFAULT_RESTAURANT_SLUG: z.string().default('green-spoon-kitchen'),
+  DEFAULT_RESTAURANT_SLUG: z.string().default('smash-and-go'),
   LOG_DIR: z.string().default('logs'),
 });
 

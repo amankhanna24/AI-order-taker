@@ -104,9 +104,9 @@ export function MenuPanel({ menu, error, disabled, onAdd, onRetry }: Props) {
                   <li key={p.id} className={`menu-item ${p.available ? '' : 'menu-item-off'}`}>
                     <div className="menu-item-row">
                       <span
-                        className={`diet-dot ${p.vegan ? 'vegan' : 'veg'}`}
-                        title={p.vegan ? 'Vegan' : 'Vegetarian'}
-                        aria-label={p.vegan ? 'Vegan' : 'Vegetarian'}
+                        className={`diet-dot ${p.vegan ? 'vegan' : p.vegetarian ? 'veg' : 'nonveg'}`}
+                        title={p.vegan ? 'Vegan' : p.vegetarian ? 'Vegetarian' : 'Contains meat'}
+                        aria-label={p.vegan ? 'Vegan' : p.vegetarian ? 'Vegetarian' : 'Contains meat'}
                       />
                       <div className="menu-item-main">
                         <div className="menu-item-name">
@@ -138,7 +138,7 @@ export function MenuPanel({ menu, error, disabled, onAdd, onRetry }: Props) {
                       <div className="menu-details">
                         {p.description && <p className="tiny">{p.description}</p>}
                         <div className="chips">
-                          <span className="chip chip-green">{p.vegan ? 'Vegan' : 'Vegetarian'}</span>
+                          {(p.vegan || p.vegetarian) && <span className="chip chip-green">{p.vegan ? 'Vegan' : 'Vegetarian'}</span>}
                           {p.allergens && p.allergens.length > 0 && (
                             <span className="chip">Contains: {p.allergens.map((a) => a.replace('_', ' ').toLowerCase()).join(', ')}</span>
                           )}
@@ -166,7 +166,7 @@ export function MenuPanel({ menu, error, disabled, onAdd, onRetry }: Props) {
                         <span>{c.name}</span>
                         {!c.available && <span className="chip chip-remove">Sold out</span>}
                       </div>
-                      <div className="muted tiny menu-desc-line">Burger + side + drink — you choose each</div>
+                      {c.description && <div className="muted tiny menu-desc-line">{c.description}</div>}
                     </div>
                     <strong className="menu-price">{c.priceDisplay}</strong>
                     <button

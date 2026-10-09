@@ -14,7 +14,7 @@ export interface OrderLine {
   unitTotal: number;
   lineTotal: number;
   modifiers: OrderModifier[];
-  comboSelections: { component: string; productName: string }[] | null;
+  comboSelections: { component: string; productName: string; modifiers?: { name: string; price: number; preset: boolean }[] }[] | null;
 }
 export interface Order {
   id: string;
@@ -61,11 +61,12 @@ export interface MenuProduct {
   priceDisplay: string;
   available: boolean;
   unavailableReason: string | null;
+  vegetarian: boolean;
   vegan: boolean;
   allergens: string[] | null;
 }
 export interface MenuData {
   restaurant: { name: string; status: string; orderingEnabled: boolean };
   categories: { name: string; products: MenuProduct[] }[];
-  combos: { id: string; name: string; priceDisplay: string; available: boolean }[];
+  combos: { id: string; name: string; description: string | null; priceDisplay: string; available: boolean }[];
 }

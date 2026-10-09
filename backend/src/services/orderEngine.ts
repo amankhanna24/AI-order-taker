@@ -2,8 +2,8 @@ import { Prisma } from '../../generated/prisma/client';
 import { prisma, type Tx } from '../config/prisma';
 import { priceLine, priceOrder } from '../domain/pricing';
 import { CommandRejected, ApiError } from '../utils/errors';
-import type { Catalog, ProductView } from './catalog';
-import { lineRef, parseLineRef, summarize, toOrderView, type OrderView } from './orderView';
+import type { Catalog, ComboView, ProductView } from './catalog';
+import { describePick, lineRef, parseLineRef, readBack, toOrderView, type ComboPick, type OrderView } from './orderView';
 import {
   MAX_LINE_QTY,
   MAX_ORDER_UNITS,
@@ -26,7 +26,8 @@ export type Actor = 'CUSTOMER' | 'AGENT' | 'SYSTEM';
 
 export type Command =
   | { type: 'ADD_ITEM'; productId: string; quantity: number; modifierIds?: string[]; removeIngredients?: string[] }
-  | { type: 'ADD_COMBO'; comboId: string; quantity: number; selections: { componentId: string; productId: string }[] }
+  | { type: 'ADD_COMBO'; comboId: string; quantity: number; selections: { componentId: string; productId: string; modifierIds?: string[] }[] }
+  | { type: 'CHANGE_COMBO'; line: string; selections: { componentId: string; productId: string; modifierIds?: string[] }[] }
   | { type: 'REMOVE_ITEM'; line: string }
   | { type: 'CHANGE_QUANTITY'; line: string; quantity: number }
   | { type: 'ADD_MODIFIER'; line: string; modifierId: string; units?: number }
@@ -35,7 +36,7 @@ export type Command =
   | { type: 'RESTORE_INGREDIENT'; line: string; ingredient: string; units?: number }
   | { type: 'REPLACE_MODIFIER'; line: string; fromModifierId: string; toModifierId: string; units?: number }
   | { type: 'REPLACE_ITEM'; line: string; productId: string }
-  | { type: 'SET_CUSTOMER_DETAILS'; name: string; phone: string; pickupAt?: Date | null; notes?: string | null }
+  | { type: 'SET_CUSTOMER_DETAILS'; name?: string | null; phone?: string | null; pickupAt?: Date | null; notes?: string | null }
   | { type: 'REQUEST_CONFIRMATION' }
   | { type: 'CONFIRM_ORDER'; expectedVersion: number }
   | { type: 'CANCEL_ORDER' }
@@ -50,7 +51,7 @@ export interface CommandOutcome {
 
 const EDITABLE: string[] = ['DRAFT', 'IN_PROGRESS', 'READY_FOR_CONFIRMATION'];
 const EDIT_TYPES = new Set([
-  'ADD_ITEM', 'ADD_COMBO', 'REMOVE_ITEM', 'CHANGE_QUANTITY', 'ADD_MODIFIER', 'REMOVE_MODIFIER', 'REMOVE_INGREDIENT',
+  'ADD_ITEM', 'ADD_COMBO', 'CHANGE_COMBO', 'REMOVE_ITEM', 'CHANGE_QUANTITY', 'ADD_MODIFIER', 'REMOVE_MODIFIER', 'REMOVE_INGREDIENT',
   'RESTORE_INGREDIENT', 'REPLACE_MODIFIER', 'REPLACE_ITEM', 'CLEAR_ORDER',
 ]);
 
@@ -135,7 +136,7 @@ function findLine(order: OrderRow, ref: string): ItemRow {
 }
 
 function productOfLine(catalog: Catalog, item: ItemRow): ProductView {
-  if (!item.productId) throw new CommandRejected('COMBO_LINE', 'Combo items cannot be customised after they are added.');
+  if (!item.productId) throw new CommandRejected('COMBO_LINE', 'A combo cannot be changed once added. Remove it and add it again with the changes, or order the parts separately.');
   const p = catalog.products.find((x) => x.id === item.productId);
   if (!p) throw new CommandRejected('UNKNOWN_PRODUCT', `${item.productNameSnapshot} is no longer on the menu.`);
   return p;
@@ -288,7 +289,8 @@ async function execute(tx: Tx, order: OrderRow, cmd: Command, actor: Actor, cata
       await writeMods(tx, item.id, drafts);
       await event(tx, order.id, 'ITEM_ADDED', { line: lineRef(lineNo), product: product.name, quantity: cmd.quantity, modifiers: drafts.map((d) => d.name) }, actor);
       affected.push(lineNo);
-      message = `Added ${cmd.quantity} × ${product.name}.`;
+      const chosen = drafts.filter((d) => d.source === 'EXPLICIT').map((d) => (d.kind === 'REMOVAL' ? `no ${d.name}` : d.name));
+      message = `Added ${cmd.quantity} × ${product.name}${chosen.length ? ` (${chosen.join(', ')})` : ''}.`;
       break;
     }
     case 'ADD_COMBO': {
@@ -297,23 +299,7 @@ async function execute(tx: Tx, order: OrderRow, cmd: Command, actor: Actor, cata
       const combo = catalog.combos.find((c) => c.id === cmd.comboId);
       if (!combo) throw new CommandRejected('UNKNOWN_PRODUCT', 'That combo is not on the menu.');
       requireOrderable(combo);
-      if (cmd.selections.some((s) => !combo.components.some((c) => c.id === s.componentId)))
-        throw new CommandRejected('NOT_SUPPORTED', `Unknown component for ${combo.name}.`);
-      const picked: { component: string; productId: string; productName: string; upcharge: number }[] = [];
-      for (const comp of combo.components) {
-        const sel = cmd.selections.filter((s) => s.componentId === comp.id);
-        if (sel.length < comp.min || sel.length > comp.max || (comp.required && sel.length === 0))
-          throw new CommandRejected('NEEDS_INFO', `${combo.name} needs a choice for ${comp.name}.`, {
-            missing: [{ group: comp.name, required: comp.required, options: comp.options.map((o) => ({ name: o.productName, extraCost: o.upcharge })) }],
-          });
-        for (const s of sel) {
-          const opt = comp.options.find((o) => o.productId === s.productId);
-          if (!opt) throw new CommandRejected('NOT_SUPPORTED', `That choice is not available for ${comp.name}.`);
-          requireOrderable(getProduct(catalog, opt.productId));
-          picked.push({ component: comp.name, productId: opt.productId, productName: opt.productName, upcharge: opt.upcharge });
-        }
-      }
-      const unit = combo.basePrice + picked.reduce((s, p) => s + p.upcharge, 0);
+      const { picked, unit } = resolveComboPicks(catalog, combo, cmd.selections);
       const lineNo = await nextLineNo(tx, order.id);
       await tx.orderItem.create({
         data: {
@@ -327,12 +313,28 @@ async function execute(tx: Tx, order: OrderRow, cmd: Command, actor: Actor, cata
           lineTotal: unit * cmd.quantity,
           taxCategory: combo.taxCategory,
           position: lineNo,
-          comboSelections: picked,
+          comboSelections: picked as unknown as Prisma.InputJsonValue,
         },
       });
-      await event(tx, order.id, 'ITEM_ADDED', { line: lineRef(lineNo), combo: combo.name, quantity: cmd.quantity, selections: picked.map((p) => p.productName) }, actor);
+      await event(tx, order.id, 'ITEM_ADDED', { line: lineRef(lineNo), combo: combo.name, quantity: cmd.quantity, selections: picked.map(describePick) }, actor);
       affected.push(lineNo);
-      message = `Added ${cmd.quantity} × ${combo.name} (${picked.map((p) => p.productName).join(', ')}).`;
+      message = `Added ${cmd.quantity} × ${combo.name} (${picked.map(describePick).join(', ')}).`;
+      break;
+    }
+    case 'CHANGE_COMBO': {
+      const item = findLine(order, cmd.line);
+      const combo = item.comboId ? catalog.combos.find((c) => c.id === item.comboId) : undefined;
+      if (!combo) throw new CommandRejected('NOT_COMBO', `${item.productNameSnapshot} is not a combo.`);
+      requireOrderable(combo);
+      const before = (item.comboSelections as unknown as ComboPick[] | null) ?? [];
+      const { picked, unit } = resolveComboPicks(catalog, combo, cmd.selections);
+      await tx.orderItem.update({
+        where: { id: item.id },
+        data: { unitBasePrice: unit, unitTotal: unit, lineTotal: unit * item.quantity, comboSelections: picked as unknown as Prisma.InputJsonValue },
+      });
+      await event(tx, order.id, 'COMBO_CHANGED', { line: cmd.line, combo: combo.name, from: before.map(describePick), to: picked.map(describePick) }, actor);
+      affected.push(item.lineNo);
+      message = `Updated the ${combo.name} (${lineRef(item.lineNo)}): ${picked.map(describePick).join(', ')}.`;
       break;
     }
     case 'REMOVE_ITEM': {
@@ -479,10 +481,15 @@ async function execute(tx: Tx, order: OrderRow, cmd: Command, actor: Actor, cata
     case 'SET_CUSTOMER_DETAILS': {
       await tx.order.update({
         where: { id: order.id },
-        data: { customerName: cmd.name, customerPhone: cmd.phone, pickupAt: cmd.pickupAt ?? null, notes: cmd.notes ?? null },
+        data: {
+          customerName: cmd.name ?? order.customerName,
+          customerPhone: cmd.phone ?? order.customerPhone,
+          pickupAt: cmd.pickupAt ?? order.pickupAt,
+          notes: cmd.notes ?? order.notes,
+        },
       });
-      await event(tx, order.id, 'CUSTOMER_DETAILS_SET', { name: cmd.name, pickupAt: cmd.pickupAt?.toISOString() ?? null }, actor);
-      message = `Saved pickup details for ${cmd.name}.`;
+      await event(tx, order.id, 'CUSTOMER_DETAILS_SET', { name: cmd.name ?? null, pickupAt: cmd.pickupAt?.toISOString() ?? null }, actor);
+      message = cmd.name ? `Noted the order under the name ${cmd.name}.` : 'Saved the order details.';
       break;
     }
     case 'CLEAR_ORDER': {
@@ -503,12 +510,10 @@ async function execute(tx: Tx, order: OrderRow, cmd: Command, actor: Actor, cata
       if (!EDITABLE.includes(order.status)) throw new CommandRejected('ORDER_CLOSED', `This order is ${order.status.toLowerCase()}.`);
       restaurantGate(catalog);
       validateWholeOrder(order, catalog);
-      if (!order.customerName || !order.customerPhone)
-        throw new CommandRejected('NEEDS_CUSTOMER_DETAILS', 'A name and phone number are needed for pickup before the order can be confirmed.');
       const reviewed = await reprice(tx, order.id, catalog, 'READY_FOR_CONFIRMATION');
       await event(tx, order.id, 'CONFIRMATION_REQUESTED', { total: reviewed.total }, actor);
       const view = toOrderView(reviewed);
-      return { order: view, message: summarize(view), affectedLines: [], changed: order.status !== 'READY_FOR_CONFIRMATION' };
+      return { order: view, message: readBack(view), affectedLines: [], changed: order.status !== 'READY_FOR_CONFIRMATION' };
     }
     case 'CONFIRM_ORDER': {
       if (order.status === 'SUBMITTED' || order.status === 'COMPLETED')
@@ -530,6 +535,58 @@ async function execute(tx: Tx, order: OrderRow, cmd: Command, actor: Actor, cata
   const hasLines = (await tx.orderItem.count({ where: { orderId: order.id, status: 'ACTIVE' } })) > 0;
   const updated = await reprice(tx, order.id, catalog, isEdit ? (hasLines ? 'IN_PROGRESS' : 'DRAFT') : undefined);
   return { order: toOrderView(updated), message, affectedLines: affected.map(lineRef), changed };
+}
+
+/**
+ * Validate a customer's choices for a combo and price it: fixed components are filled in, the variants the combo
+ * fixes (e.g. Medium drink) are applied and included in the price, and the customer's own choices are checked.
+ */
+function resolveComboPicks(catalog: Catalog, combo: ComboView, selections: { componentId: string; productId: string; modifierIds?: string[] }[]) {
+  if (selections.some((s) => !combo.components.some((c) => c.id === s.componentId))) throw new CommandRejected('NOT_SUPPORTED', `Unknown component for ${combo.name}.`);
+  const picked: ComboPick[] = [];
+  let extras = 0; // paid options the customer chose on top of what the combo includes
+  for (const comp of combo.components) {
+    let sel = selections.filter((s) => s.componentId === comp.id);
+    // A component with a single possible product (Classic Combo's burger) needs no question.
+    if (sel.length === 0 && comp.required && comp.options.length === 1) sel = [{ componentId: comp.id, productId: comp.options[0].productId }];
+    if (sel.length < comp.min || sel.length > comp.max || (comp.required && sel.length === 0))
+      throw new CommandRejected('NEEDS_INFO', `${combo.name} needs a choice for ${comp.name}.`, {
+        missing: [{ group: comp.name, required: comp.required, options: comp.options.map((o) => ({ name: o.productName, extraCost: o.upcharge })) }],
+      });
+    for (const s of sel) {
+      const opt = comp.options.find((o) => o.productId === s.productId);
+      if (!opt) throw new CommandRejected('NOT_SUPPORTED', `That choice is not available for ${comp.name}.`);
+      const product = getProduct(catalog, opt.productId);
+      requireOrderable(product);
+      const presets: ModDraft[] = [];
+      for (const pr of opt.presets) {
+        const group = product.groups.find((g) => g.id === pr.groupId);
+        if (group?.modifiers.some((m) => m.id === pr.modifierId)) presets.push(modDraft(group, pr.modifierId, 'EXPLICIT'));
+      }
+      for (const id of s.modifierIds ?? []) {
+        const found = findModifier(product, id);
+        const fixed = found && presets.find((d) => d.modifierGroupId === found.group.id);
+        if (fixed) throw new CommandRejected('NOT_SUPPORTED', `In the ${combo.name} the ${product.name} comes as ${fixed.name}; it can't be changed.`);
+      }
+      const { drafts, missing } = buildSelections(product, s.modifierIds ?? [], [], presets);
+      if (missing.length)
+        throw new CommandRejected('NEEDS_INFO', `The ${product.name} in the ${combo.name} needs a choice for: ${missing.map((g) => g.name).join(', ')}.`, {
+          component: comp.name,
+          missing: missing.map(describeGroup),
+        });
+      const fixedIds = new Set(presets.map((d) => d.modifierId));
+      const mods = drafts.map((d) => ({
+        id: d.modifierId ?? undefined,
+        name: d.name,
+        kind: d.kind,
+        price: fixedIds.has(d.modifierId) ? 0 : d.price * d.quantity,
+        preset: fixedIds.has(d.modifierId),
+      }));
+      extras += mods.reduce((sum, m) => sum + m.price, 0);
+      picked.push({ component: comp.name, productId: opt.productId, productName: opt.productName, upcharge: opt.upcharge, modifiers: mods });
+    }
+  }
+  return { picked, unit: combo.basePrice + picked.reduce((sum, p) => sum + p.upcharge, 0) + extras };
 }
 
 /** Final validation before review/submit (§60): every line present, orderable, required groups satisfied. */

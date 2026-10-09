@@ -3,28 +3,57 @@ import test from 'node:test';
 import { priceLine, priceOrder } from './pricing';
 import { formatMoney } from './money';
 
-test('spec §32 example: ₹488 subtotal, 5% tax ₹24.40, total ₹512.40', () => {
+const aed = (n: number) => n * 100;
+
+test('Smash & Go: add-ons are price deltas on the burger, total is derived (no tax configured)', () => {
+  // 2 × Grilled Chicken Burger (28) + Extra Cheese (+4) + Fried Egg (+6), 1 × Fries Large (10 + 5)
   const lines = [
-    { quantity: 1, unitBasePrice: 18900, taxCategory: 'STANDARD', modifiers: [{ price: 4500, quantity: 1 }, { price: 2000, quantity: 1 }] },
-    { quantity: 1, unitBasePrice: 18900, taxCategory: 'STANDARD', modifiers: [{ price: 4500, quantity: 1 }] },
+    { quantity: 2, unitBasePrice: aed(28), taxCategory: 'STANDARD', modifiers: [{ price: aed(4), quantity: 1 }, { price: aed(6), quantity: 1 }] },
+    { quantity: 1, unitBasePrice: aed(10), taxCategory: 'STANDARD', modifiers: [{ price: aed(5), quantity: 1 }] },
   ];
-  const p = priceOrder(lines, { STANDARD: 500 });
-  assert.equal(p.subtotal, 48800);
-  assert.equal(p.tax, 2440);
-  assert.equal(p.total, 51240);
-  assert.equal(formatMoney(p.total), '₹512.40');
+  const p = priceOrder(lines, {});
+  assert.equal(p.subtotal, aed(91));
+  assert.equal(p.tax, 0);
+  assert.equal(p.total, aed(91));
+  assert.equal(formatMoney(p.total), 'AED 91');
 });
 
-test('line pricing multiplies unit total by quantity (§26)', () => {
-  const l = priceLine({ quantity: 2, unitBasePrice: 18900, taxCategory: 'STANDARD', modifiers: [{ price: 4500, quantity: 1 }, { price: 2000, quantity: 1 }] });
-  assert.deepEqual(l, { modifierTotal: 6500, unitTotal: 25400, lineTotal: 50800 });
+test('combo is cheaper than the à-la-carte parts: Classic Combo 42 vs 28 + 10 + 8', () => {
+  const alaCarte = priceOrder(
+    [
+      { quantity: 1, unitBasePrice: aed(28), taxCategory: 'S', modifiers: [] },
+      { quantity: 1, unitBasePrice: aed(10), taxCategory: 'S', modifiers: [] },
+      { quantity: 1, unitBasePrice: aed(6), taxCategory: 'S', modifiers: [{ price: aed(2), quantity: 1 }] },
+    ],
+    {},
+  );
+  const combo = priceOrder([{ quantity: 1, unitBasePrice: aed(42), taxCategory: 'S', modifiers: [] }], {});
+  assert.equal(alaCarte.total, aed(46));
+  assert.equal(combo.total, aed(42));
+  assert.equal(alaCarte.total - combo.total, aed(4));
 });
 
-test('tax rounds half-up to the paisa', () => {
-  const p = priceOrder([{ quantity: 1, unitBasePrice: 9900, taxCategory: 'S', modifiers: [] }], { S: 500 });
-  assert.equal(p.tax, 495);
-  const q = priceOrder([{ quantity: 1, unitBasePrice: 12900, taxCategory: 'S', modifiers: [] }], { S: 500 });
-  assert.equal(q.tax, 645); // 644.5 -> 645
+test('line pricing multiplies unit total by quantity', () => {
+  const l = priceLine({ quantity: 2, unitBasePrice: aed(30), taxCategory: 'STANDARD', modifiers: [{ price: aed(4), quantity: 1 }, { price: 0, quantity: 1 }] });
+  assert.deepEqual(l, { modifierTotal: aed(4), unitTotal: aed(34), lineTotal: aed(68) });
+});
+
+test('modifier quantity counts toward the unit total', () => {
+  const l = priceLine({ quantity: 1, unitBasePrice: aed(38), taxCategory: 'S', modifiers: [{ price: aed(10), quantity: 2 }] });
+  assert.equal(l.unitTotal, aed(58));
+});
+
+test('money formatting shows fils only when present', () => {
+  assert.equal(formatMoney(2800), 'AED 28');
+  assert.equal(formatMoney(2850), 'AED 28.50');
+  assert.equal(formatMoney(5), 'AED 0.05');
+  assert.equal(formatMoney(0), 'AED 0');
+});
+
+test('tax (when configured) is exclusive and rounds half-up to the fil', () => {
+  const p = priceOrder([{ quantity: 1, unitBasePrice: 2650, taxCategory: 'S', modifiers: [] }], { S: 500 });
+  assert.equal(p.tax, 133); // 132.5 -> 133
+  assert.equal(p.total, 2783);
 });
 
 test('discount reduces taxable amount and never exceeds subtotal', () => {

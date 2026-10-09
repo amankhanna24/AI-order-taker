@@ -13,7 +13,7 @@ function App() {
   return (
     <BrowserRouter>
       <nav className="topnav" aria-label="Main">
-        <span className="brand">The Order Taker</span>
+        <span className="brand">Smash &amp; Go</span>
         <div>
           <NavLink to="/" end>Order</NavLink>
           <NavLink to="/menu">Menu</NavLink>

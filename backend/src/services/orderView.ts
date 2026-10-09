@@ -15,6 +15,14 @@ export interface OrderModifierView {
   quantity: number;
   source: 'EXPLICIT' | 'DEFAULT';
 }
+/** One product inside a combo line, with the variants fixed by the combo (preset) and the customer's own choices. */
+export interface ComboPick {
+  component: string;
+  productId?: string;
+  productName: string;
+  upcharge: number;
+  modifiers?: { id?: string; name: string; kind?: 'ADD' | 'REMOVAL'; price: number; preset: boolean }[];
+}
 export interface OrderLineView {
   lineRef: string;
   productId: string | null;
@@ -26,7 +34,13 @@ export interface OrderLineView {
   unitTotal: number;
   lineTotal: number;
   modifiers: OrderModifierView[];
-  comboSelections: { component: string; productName: string; upcharge: number }[] | null;
+  comboSelections: ComboPick[] | null;
+}
+
+/** "Soft Drink (Medium, Coke)" */
+export function describePick(p: ComboPick): string {
+  const mods = (p.modifiers ?? []).map((m) => m.name);
+  return mods.length ? `${p.productName} (${mods.join(', ')})` : p.productName;
 }
 export interface OrderView {
   id: string;
@@ -114,21 +128,49 @@ export function toOrderView(o: any): OrderView {
   };
 }
 
-/** Plain-text summary used for spoken/chat read-back (§58). Prices come from the engine only. */
+const modLabel = (m: OrderModifierView) => (m.kind === 'REMOVAL' ? `no ${m.name}` : m.name);
+
+function lineExtras(l: OrderLineView): string[] {
+  const combo = l.comboSelections?.map(describePick) ?? [];
+  return [...combo, ...l.modifiers.map(modLabel)];
+}
+
+/** Internal state dump for the model/tools: keeps line refs so references can be resolved. Prices come from the engine only. */
 export function summarize(v: OrderView): string {
   if (v.lines.length === 0) return 'Your order is empty.';
   const out = v.lines.map((l) => {
-    const mods = l.modifiers
-      .filter((m) => !(m.source === 'DEFAULT' && m.price === 0))
-      .map((m) => (m.kind === 'REMOVAL' ? `no ${m.name}` : m.name));
-    const combo = l.comboSelections?.map((s) => s.productName).join(', ');
-    const extras = [...(combo ? [combo] : []), ...mods];
+    const extras = lineExtras(l);
     return `${l.lineRef}: ${l.quantity} × ${l.name}${extras.length ? ` (${extras.join(', ')})` : ''} — ${formatMoney(l.lineTotal, v.currency)}`;
   });
   out.push(`Subtotal ${v.display.subtotal}`);
   if (v.discount) out.push(`Discount -${v.display.discount}`);
-  out.push(`Tax ${v.display.tax}`);
+  if (v.tax) out.push(`Tax ${v.display.tax}`);
   if (v.fees) out.push(`Fees ${v.display.fees}`);
   out.push(`Total ${v.display.total}`);
   return out.join('\n');
+}
+
+const plural = (name: string, qty: number) => (qty === 1 || /s$/i.test(name) ? name : /(sh|ch|x)$/i.test(name) ? `${name}es` : `${name}s`);
+const sayList = (xs: string[]) => (xs.length <= 1 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
+
+/**
+ * Natural-sounding read-back for the customer (spoken or typed): no line refs, defaults included so a
+ * wrong size is audible, and a single closing total. The question "Is that correct?" is added by the caller.
+ */
+export function readBack(v: OrderView): string {
+  if (v.lines.length === 0) return 'Your order is empty.';
+  const parts = v.lines.map((l) => {
+    const head = `${l.quantity} ${plural(l.name, l.quantity)}`;
+    if (l.comboSelections?.length) return `${head}: ${lineExtras(l).join(', ')}`;
+    // what the customer chose reads as "with ...", what we assumed reads as "(Regular)" so a wrong default is easy to catch
+    const chosen = l.modifiers.filter((m) => m.source !== 'DEFAULT').map(modLabel);
+    const assumed = l.modifiers.filter((m) => m.source === 'DEFAULT').map(modLabel);
+    return `${head}${chosen.length ? ` with ${sayList(chosen)}` : ''}${assumed.length ? ` (${assumed.join(', ')})` : ''}`;
+  });
+  const money = [`Subtotal ${v.display.subtotal}`];
+  if (v.discount) money.push(`discount minus ${v.display.discount}`);
+  if (v.tax) money.push(`tax ${v.display.tax}`);
+  if (v.fees) money.push(`fees ${v.display.fees}`);
+  const breakdown = money.length > 1 ? ` (${money.join(', ')})` : '';
+  return `Here is your order: ${parts.join('; ')}. Your total is ${v.display.total}${breakdown}.`;
 }

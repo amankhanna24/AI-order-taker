@@ -7,7 +7,7 @@ datasource db {
   provider = "postgresql"
 }
 
-// All money is stored as integer minor units (paise). Tax rates are basis points (500 = 5%).
+// All money is stored as integer minor units (fils for AED). Tax rates are basis points (500 = 5%).
 
 enum RestaurantStatus {
   OPEN
@@ -106,8 +106,8 @@ model Restaurant {
   slug            String           @unique
   name            String
   description     String?
-  currency        String           @default("INR")
-  timezone        String           @default("Asia/Kolkata")
+  currency        String           @default("AED")
+  timezone        String           @default("Asia/Dubai")
   phone           String?
   status          RestaurantStatus @default(OPEN)
   orderingEnabled Boolean          @default(true)
@@ -131,10 +131,10 @@ model Location {
   address      String
   city         String
   state        String
-  country      String       @default("India")
+  country      String       @default("UAE")
   postalCode   String
   phone        String?
-  timezone     String       @default("Asia/Kolkata")
+  timezone     String       @default("Asia/Dubai")
   status       EntityStatus @default(ACTIVE)
 
   restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
@@ -183,7 +183,7 @@ model Product {
   categoryId           String
   name                 String
   description          String?
-  basePrice            Int // paise
+  basePrice            Int // minor units (fils)
   status               EntityStatus @default(ACTIVE)
   available            Boolean      @default(true)
   availableFrom        String? // HH:mm restaurant-local
@@ -232,13 +232,14 @@ model Modifier {
   modifierGroupId String
   name            String
   description     String?
-  priceDelta      Int          @default(0) // paise, >= 0
+  priceDelta      Int          @default(0) // minor units (fils), >= 0
   available       Boolean      @default(true)
   status          EntityStatus @default(ACTIVE)
   aliases         String[]
   displayOrder    Int          @default(0)
 
-  group ModifierGroup @relation(fields: [modifierGroupId], references: [id], onDelete: Cascade)
+  group        ModifierGroup          @relation(fields: [modifierGroupId], references: [id], onDelete: Cascade)
+  comboPresets ComboComponentPreset[]
 
   @@unique([modifierGroupId, name])
 }
@@ -292,10 +293,24 @@ model ComboComponentProduct {
   productId   String
   upcharge    Int    @default(0)
 
-  component ComboComponent @relation(fields: [componentId], references: [id], onDelete: Cascade)
-  product   Product        @relation(fields: [productId], references: [id], onDelete: Cascade)
+  component ComboComponent         @relation(fields: [componentId], references: [id], onDelete: Cascade)
+  product   Product                @relation(fields: [productId], references: [id], onDelete: Cascade)
+  presets   ComboComponentPreset[]
 
   @@id([componentId, productId])
+}
+
+/// A variant the combo fixes for a component product (e.g. "Regular" fries, "Medium" soft drink).
+/// Its price is already inside the combo price, so it never adds to the total.
+model ComboComponentPreset {
+  componentId String
+  productId   String
+  modifierId  String
+
+  option   ComboComponentProduct @relation(fields: [componentId, productId], references: [componentId, productId], onDelete: Cascade)
+  modifier Modifier              @relation(fields: [modifierId], references: [id], onDelete: Cascade)
+
+  @@id([componentId, productId, modifierId])
 }
 
 model TaxRule {
@@ -315,7 +330,7 @@ model Discount {
   restaurantId     String
   name             String
   type             DiscountType
-  value            Int // percentage in bps, or paise for FIXED_AMOUNT
+  value            Int // percentage in bps, or minor units for FIXED_AMOUNT
   minimumSubtotal  Int          @default(0)
   active           Boolean      @default(false)
 
@@ -352,7 +367,7 @@ model Order {
   taxBreakdown   Json        @default("[]")
   discountBreakdown Json     @default("[]")
   feeBreakdown   Json        @default("[]")
-  currency       String      @default("INR")
+  currency       String      @default("AED")
   version        Int         @default(0)
   idempotencyKey String?     @unique
   createdAt      DateTime    @default(now())
@@ -385,7 +400,7 @@ model OrderItem {
   taxCategory         String     @default("STANDARD")
   position            Int
   status              LineStatus @default(ACTIVE)
-  comboSelections     Json? // [{ component, productId, productName, upcharge }]
+  comboSelections     Json? // [{ component, productId, productName, upcharge, modifiers: [{ name, price, preset }] }]
   createdAt           DateTime   @default(now())
   updatedAt           DateTime   @updatedAt
 

@@ -159,7 +159,7 @@ export async function handleMessage(conversationId: string, token: string, rawTe
         logError('conversation.brain', e, { conversationId });
         if (rt.mutated) {
           // The model already changed the order before failing; re-parsing the message could apply it twice.
-          reply = `I've updated your order. ${rt.order.lines.length ? `Your total is now ${rt.order.display.total}.` : ''} Anything else?`;
+          reply = `${rt.lastMessage || "I've updated your order."} ${rt.order.lines.length ? `Your total is now ${rt.order.display.total}.` : ''} Anything else?`.replace(/\s+/g, ' ');
           toolsUsed = ['partial'];
         } else if (geminiEnabled()) {
           // Language model unavailable (quota/network): degrade to the deterministic parser for this turn.

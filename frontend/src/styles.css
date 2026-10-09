@@ -283,3 +283,18 @@ input[aria-invalid='true'] { border-color: var(--error); }
   .option-row .btn, .option-row .icon-btn, .option-row .switch-row { justify-self: start; }
   .modal-actions .btn { flex: 1; }
 }
+
+/* ---- voice call ---- */
+.head-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; justify-content: flex-end; }
+.call-panel { display: flex; align-items: center; gap: 0.9rem; flex-wrap: wrap; padding: 0.75rem 1rem; margin-bottom: 0.5rem; border-radius: var(--r); background: var(--card); border: 1px solid var(--border); box-shadow: var(--shadow-1); }
+.call-orb { width: 38px; height: 38px; border-radius: 50%; flex-shrink: 0; background: var(--herb); }
+.call-listening .call-orb { background: var(--saffron); animation: halo 1.2s infinite; }
+.call-thinking .call-orb { background: var(--primary-dark); animation: pulse 1s infinite ease-in-out; }
+.call-speaking .call-orb { background: var(--herb); animation: pulse 0.8s infinite ease-in-out; }
+.call-text { display: flex; flex-direction: column; flex: 1; min-width: 160px; }
+.call-text .muted { overflow-wrap: anywhere; }
+.call-actions { display: flex; gap: 0.5rem; margin-left: auto; }
+@media (max-width: 600px) {
+  .head-actions { justify-content: flex-start; }
+  .call-actions { width: 100%; justify-content: flex-end; }
+}

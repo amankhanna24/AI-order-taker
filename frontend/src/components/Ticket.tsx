@@ -32,12 +32,12 @@ export function Ticket({ order, ended, busy, error, onConfirm, onCancel, onNewOr
       {lines.length === 0 ? (
         <div className="ticket-empty">
           <p>Nothing here yet.</p>
-          <p className="muted">Tell the assistant what you'd like — for example “two paneer tikka burgers, one without cheese”.</p>
+          <p className="muted">Tell the assistant what you'd like — for example “a Spicy Zinger Burger with extra cheese and a large fries”.</p>
         </div>
       ) : (
         <ul className="lines">
           {lines.map((l) => {
-            const chips = l.modifiers.filter((m) => !(m.source === 'DEFAULT' && m.price === 0));
+            const chips = l.modifiers;
             return (
               <li key={l.lineRef} className={`line ${unavailable.has(l.lineRef) ? 'line-unavailable' : ''}`}>
                 <span className="qty" aria-label={`Quantity ${l.quantity}`}>{l.quantity}×</span>
@@ -46,10 +46,14 @@ export function Ticket({ order, ended, busy, error, onConfirm, onCancel, onNewOr
                   {(chips.length > 0 || l.comboSelections) && (
                     <div className="chips">
                       {l.comboSelections?.map((s) => (
-                        <span key={s.component + s.productName} className="chip">{s.productName}</span>
+                        <span key={s.component + s.productName} className="chip">
+                          {s.productName}
+                          {s.modifiers && s.modifiers.length > 0 && ` · ${s.modifiers.map((m) => m.name).join(', ')}`}
+                          {s.modifiers?.some((m) => !m.preset && m.price > 0) && ` +${money(s.modifiers.filter((m) => !m.preset).reduce((n, m) => n + m.price, 0), order?.currency)}`}
+                        </span>
                       ))}
                       {chips.map((m) => (
-                        <span key={m.kind + m.name} className={`chip ${m.kind === 'REMOVAL' ? 'chip-remove' : ''}`}>
+                        <span key={m.kind + m.name} className={`chip ${m.kind === 'REMOVAL' || m.name.toLowerCase().startsWith('no ') ? 'chip-remove' : ''}`}>
                           {m.kind === 'REMOVAL' ? `No ${m.name}` : m.name}
                           {m.price > 0 && ` +${money(m.price, order?.currency)}`}
                         </span>
@@ -70,7 +74,7 @@ export function Ticket({ order, ended, busy, error, onConfirm, onCancel, onNewOr
         <dl className="totals">
           <div><dt>Subtotal</dt><dd>{order.display.subtotal}</dd></div>
           {order.discount > 0 && <div><dt>Discount</dt><dd>-{order.display.discount}</dd></div>}
-          <div><dt>Tax (GST)</dt><dd>{order.display.tax}</dd></div>
+          {order.tax > 0 && <div><dt>Tax</dt><dd>{order.display.tax}</dd></div>}
           {order.fees > 0 && <div><dt>Fees</dt><dd>{order.display.fees}</dd></div>}
           <div className="grand"><dt>Total</dt><dd>{order.display.total}</dd></div>
         </dl>
