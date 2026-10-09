@@ -1,0 +1,470 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// All money is stored as integer minor units (paise). Tax rates are basis points (500 = 5%).
+
+enum RestaurantStatus {
+  OPEN
+  CLOSED
+  TEMPORARILY_UNAVAILABLE
+}
+
+enum MenuStatus {
+  ACTIVE
+  INACTIVE
+  SCHEDULED
+  ARCHIVED
+}
+
+enum EntityStatus {
+  ACTIVE
+  INACTIVE
+  ARCHIVED
+}
+
+enum SelectionType {
+  SINGLE
+  MULTIPLE
+}
+
+enum Allergen {
+  MILK
+  EGG
+  PEANUTS
+  TREE_NUTS
+  SOY
+  GLUTEN
+  SESAME
+  MUSTARD
+}
+
+enum DiscountType {
+  PERCENTAGE
+  FIXED_AMOUNT
+}
+
+enum OrderType {
+  PICKUP
+  DINE_IN
+  DELIVERY
+  DRIVE_THROUGH
+}
+
+enum OrderStatus {
+  DRAFT
+  IN_PROGRESS
+  READY_FOR_CONFIRMATION
+  CONFIRMED
+  SUBMITTED
+  COMPLETED
+  CANCELLED
+  FAILED
+}
+
+enum LineStatus {
+  ACTIVE
+  REMOVED
+}
+
+enum ModifierKind {
+  ADD
+  REMOVAL
+}
+
+enum SelectionSource {
+  EXPLICIT
+  DEFAULT
+}
+
+enum ConversationState {
+  GREETING
+  TAKING_ORDER
+  CLARIFYING
+  ANSWERING_QUESTION
+  REVIEWING_ORDER
+  CONFIRMING_ORDER
+  SUBMITTING
+  COMPLETED
+  ESCALATED
+  CANCELLED
+}
+
+enum Speaker {
+  CUSTOMER
+  AGENT
+  SYSTEM
+}
+
+model Restaurant {
+  id              String           @id @default(cuid())
+  slug            String           @unique
+  name            String
+  description     String?
+  currency        String           @default("INR")
+  timezone        String           @default("Asia/Kolkata")
+  phone           String?
+  status          RestaurantStatus @default(OPEN)
+  orderingEnabled Boolean          @default(true)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  locations      Location[]
+  menus          Menu[]
+  modifierGroups ModifierGroup[]
+  combos         Combo[]
+  taxRules       TaxRule[]
+  discounts      Discount[]
+  orders         Order[]
+  conversations  Conversation[]
+}
+
+model Location {
+  id           String       @id @default(cuid())
+  restaurantId String
+  name         String
+  address      String
+  city         String
+  state        String
+  country      String       @default("India")
+  postalCode   String
+  phone        String?
+  timezone     String       @default("Asia/Kolkata")
+  status       EntityStatus @default(ACTIVE)
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  menus      Menu[]
+  orders     Order[]
+
+  @@index([restaurantId])
+}
+
+model Menu {
+  id            String     @id @default(cuid())
+  restaurantId  String
+  locationId    String? // null = all locations
+  name          String
+  description   String?
+  status        MenuStatus @default(ACTIVE)
+  effectiveFrom DateTime?
+  effectiveUntil DateTime?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  location   Location?  @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  categories Category[]
+  combos     Combo[]
+
+  @@index([restaurantId, status])
+}
+
+model Category {
+  id           String       @id @default(cuid())
+  menuId       String
+  name         String
+  description  String?
+  displayOrder Int          @default(0)
+  status       EntityStatus @default(ACTIVE)
+
+  menu     Menu      @relation(fields: [menuId], references: [id], onDelete: Cascade)
+  products Product[]
+
+  @@unique([menuId, name])
+}
+
+model Product {
+  id                   String       @id @default(cuid())
+  categoryId           String
+  name                 String
+  description          String?
+  basePrice            Int // paise
+  status               EntityStatus @default(ACTIVE)
+  available            Boolean      @default(true)
+  availableFrom        String? // HH:mm restaurant-local
+  availableUntil       String? // HH:mm restaurant-local
+  vegetarian           Boolean      @default(true)
+  vegan                Boolean      @default(false)
+  glutenFree           Boolean      @default(false)
+  ingredients          Json         @default("[]") // [{ name: string, removable: boolean }]
+  allergens            Allergen[]
+  allergenInfoVerified Boolean      @default(false)
+  aliases              String[]
+  taxCategory          String       @default("STANDARD")
+  displayOrder         Int          @default(0)
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+
+  category       Category               @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  modifierGroups ProductModifierGroup[]
+  comboChoices   ComboComponentProduct[]
+  orderItems     OrderItem[]
+
+  @@unique([categoryId, name])
+  @@index([categoryId])
+}
+
+model ModifierGroup {
+  id                String        @id @default(cuid())
+  restaurantId      String
+  name              String
+  description       String?
+  minimumSelections Int           @default(0)
+  maximumSelections Int           @default(1)
+  selectionType     SelectionType @default(SINGLE)
+  defaultModifierId String?
+  status            EntityStatus  @default(ACTIVE)
+
+  restaurant Restaurant             @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  modifiers  Modifier[]
+  products   ProductModifierGroup[]
+
+  @@unique([restaurantId, name])
+}
+
+model Modifier {
+  id              String       @id @default(cuid())
+  modifierGroupId String
+  name            String
+  description     String?
+  priceDelta      Int          @default(0) // paise, >= 0
+  available       Boolean      @default(true)
+  status          EntityStatus @default(ACTIVE)
+  aliases         String[]
+  displayOrder    Int          @default(0)
+
+  group ModifierGroup @relation(fields: [modifierGroupId], references: [id], onDelete: Cascade)
+
+  @@unique([modifierGroupId, name])
+}
+
+model ProductModifierGroup {
+  productId       String
+  modifierGroupId String
+  displayOrder    Int    @default(0)
+
+  product Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
+  group   ModifierGroup @relation(fields: [modifierGroupId], references: [id], onDelete: Cascade)
+
+  @@id([productId, modifierGroupId])
+}
+
+model Combo {
+  id           String       @id @default(cuid())
+  restaurantId String
+  menuId       String
+  name         String
+  description  String?
+  basePrice    Int
+  available    Boolean      @default(true)
+  status       EntityStatus @default(ACTIVE)
+  aliases      String[]
+  taxCategory  String       @default("STANDARD")
+
+  restaurant Restaurant       @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  menu       Menu             @relation(fields: [menuId], references: [id], onDelete: Cascade)
+  components ComboComponent[]
+  orderItems OrderItem[]
+
+  @@unique([menuId, name])
+}
+
+model ComboComponent {
+  id                String  @id @default(cuid())
+  comboId           String
+  name              String // e.g. "Burger", "Side", "Drink"
+  required          Boolean @default(true)
+  minimumSelections Int     @default(1)
+  maximumSelections Int     @default(1)
+  displayOrder      Int     @default(0)
+
+  combo           Combo                   @relation(fields: [comboId], references: [id], onDelete: Cascade)
+  allowedProducts ComboComponentProduct[]
+}
+
+model ComboComponentProduct {
+  componentId String
+  productId   String
+  upcharge    Int    @default(0)
+
+  component ComboComponent @relation(fields: [componentId], references: [id], onDelete: Cascade)
+  product   Product        @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@id([componentId, productId])
+}
+
+model TaxRule {
+  id           String @id @default(cuid())
+  restaurantId String
+  category     String
+  name         String
+  rateBps      Int // 500 = 5%
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  @@unique([restaurantId, category])
+}
+
+model Discount {
+  id               String       @id @default(cuid())
+  restaurantId     String
+  name             String
+  type             DiscountType
+  value            Int // percentage in bps, or paise for FIXED_AMOUNT
+  minimumSubtotal  Int          @default(0)
+  active           Boolean      @default(false)
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+}
+
+model Customer {
+  id        String   @id @default(cuid())
+  name      String?
+  phone     String?
+  email     String?
+  createdAt DateTime @default(now())
+
+  orders Order[]
+}
+
+model Order {
+  id             String      @id @default(cuid())
+  restaurantId   String
+  locationId     String?
+  customerId     String?
+  orderType      OrderType   @default(PICKUP)
+  status         OrderStatus @default(DRAFT)
+  customerName   String?
+  customerPhone  String?
+  pickupAt       DateTime?
+  notes          String?
+  subtotal       Int         @default(0)
+  discount       Int         @default(0)
+  taxableAmount  Int         @default(0)
+  tax            Int         @default(0)
+  fees           Int         @default(0)
+  total          Int         @default(0)
+  taxBreakdown   Json        @default("[]")
+  discountBreakdown Json     @default("[]")
+  feeBreakdown   Json        @default("[]")
+  currency       String      @default("INR")
+  version        Int         @default(0)
+  idempotencyKey String?     @unique
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  confirmedAt    DateTime?
+  submittedAt    DateTime?
+
+  restaurant   Restaurant     @relation(fields: [restaurantId], references: [id])
+  location     Location?      @relation(fields: [locationId], references: [id])
+  customer     Customer?      @relation(fields: [customerId], references: [id])
+  items        OrderItem[]
+  events       OrderEvent[]
+  conversation Conversation?
+
+  @@index([restaurantId, status])
+}
+
+model OrderItem {
+  id                  String     @id @default(cuid())
+  lineNo              Int // stable human reference: line_001
+  orderId             String
+  productId           String?
+  comboId             String?
+  productNameSnapshot String
+  quantity            Int
+  unitBasePrice       Int
+  modifierTotal       Int        @default(0)
+  unitTotal           Int
+  lineTotal           Int
+  taxCategory         String     @default("STANDARD")
+  position            Int
+  status              LineStatus @default(ACTIVE)
+  comboSelections     Json? // [{ component, productId, productName, upcharge }]
+  createdAt           DateTime   @default(now())
+  updatedAt           DateTime   @updatedAt
+
+  order     Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product   Product?        @relation(fields: [productId], references: [id])
+  combo     Combo?          @relation(fields: [comboId], references: [id])
+  modifiers OrderModifier[]
+
+  @@unique([orderId, lineNo])
+  @@index([orderId])
+}
+
+model OrderModifier {
+  id                   String          @id @default(cuid())
+  orderItemId          String
+  kind                 ModifierKind    @default(ADD)
+  modifierId           String?
+  modifierGroupId      String?
+  ingredientName       String?
+  modifierNameSnapshot String
+  modifierPrice        Int             @default(0)
+  quantity             Int             @default(1)
+  source               SelectionSource @default(EXPLICIT)
+
+  item OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+
+  @@index([orderItemId])
+}
+
+model OrderEvent {
+  id        String   @id @default(cuid())
+  orderId   String
+  type      String
+  payload   Json
+  actor     Speaker  @default(SYSTEM)
+  createdAt DateTime @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId, createdAt])
+}
+
+model Conversation {
+  id           String            @id @default(cuid())
+  orderId      String            @unique
+  restaurantId String
+  tokenHash    String            @unique // sha256 of the session token handed to the client
+  state        ConversationState @default(GREETING)
+  context      Json              @default("{}")
+  startedAt    DateTime          @default(now())
+  endedAt      DateTime?
+
+  order       Order                 @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  restaurant  Restaurant            @relation(fields: [restaurantId], references: [id])
+  messages    ConversationMessage[]
+  escalations Escalation[]
+}
+
+model ConversationMessage {
+  id             String   @id @default(cuid())
+  conversationId String
+  speaker        Speaker
+  text           String
+  intent         String?
+  entities       Json?
+  confidence     Float?
+  createdAt      DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+}
+
+model Escalation {
+  id             String   @id @default(cuid())
+  conversationId String
+  reason         String
+  snapshot       Json
+  createdAt      DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+}
